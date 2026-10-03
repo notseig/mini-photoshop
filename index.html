@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mini Photoshop</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;height:100vh;display:flex;flex-direction:column;background:#1e1e1e;color:#ddd;font:13px system-ui,sans-serif;overflow:hidden}
+header{display:flex;gap:6px;align-items:center;padding:6px 10px;background:#2b2b2b;border-bottom:1px solid #111;flex-wrap:wrap}
+header b{margin-right:10px}
+button,select{background:#3a3a3a;color:#ddd;border:1px solid #555;border-radius:4px;padding:5px 9px;cursor:pointer;font:inherit}
+button:hover{background:#4a4a4a}
+button.on{background:#2d6cdf;border-color:#2d6cdf;color:#fff}
+main{flex:1;display:flex;min-height:0}
+#tools{width:54px;background:#252525;display:flex;flex-direction:column;gap:5px;padding:6px;align-items:stretch}
+#tools button{padding:8px 0;font-size:18px}
+#stage{flex:1;overflow:auto;background:#3b3b3b;position:relative}
+#wrap{display:inline-block;margin:40px;box-shadow:0 0 0 1px #000,0 6px 30px #000a;transform-origin:0 0;
+ background:conic-gradient(#ccc 25%,#fff 0 50%,#ccc 0 75%,#fff 0) 0 0/16px 16px}
+#view{display:block;touch-action:none;cursor:crosshair}
+#side{width:250px;background:#252525;padding:10px;overflow:auto;display:flex;flex-direction:column;gap:10px}
+#side h4{margin:0 0 4px;font-size:11px;text-transform:uppercase;color:#999;letter-spacing:.08em}
+label{display:flex;align-items:center;gap:6px;justify-content:space-between}
+input[type=range]{flex:1}
+input[type=color]{width:40px;height:26px;border:0;background:none;padding:0}
+.layer{display:flex;align-items:center;gap:6px;padding:5px;border:1px solid #444;border-radius:4px;cursor:pointer;background:#2e2e2e}
+.layer.sel{border-color:#2d6cdf;background:#26354f}
+.layer canvas{width:34px;height:24px;background:#fff;border:1px solid #555}
+.layer span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row{display:flex;gap:5px;flex-wrap:wrap}
+#status{padding:3px 10px;background:#2b2b2b;font-size:11px;color:#999}
+@media(max-width:700px){#side{width:170px}}
+</style>
+</head>
+<body>
+<header>
+  <b>Mini Photoshop</b>
+  <button id="bOpen">Ouvrir</button>
+  <button id="bNew">Nouveau</button>
+  <button id="bSave">Exporter PNG</button>
+  <button id="bUndo">Annuler</button>
+  <button id="bRedo">Rétablir</button>
+  <button id="bZoomOut">−</button><button id="bZoomIn">+</button><button id="bFit">Ajuster</button>
+  <input id="file" type="file" accept="image/*" hidden>
+</header>
+<main>
+  <div id="tools"></div>
+  <div id="stage"><div id="wrap"><canvas id="view"></canvas></div></div>
+  <div id="side">
+    <div>
+      <h4>Pinceau</h4>
+      <label>Couleur <input type="color" id="color" value="#e63946"></label>
+      <label>Taille <input type="range" id="size" min="1" max="200" value="20"><span id="sizeV">20</span></label>
+      <label>Opacité <input type="range" id="alpha" min="1" max="100" value="100"></label>
+      <label>Dureté <input type="range" id="hard" min="0" max="100" value="60"></label>
+    </div>
+    <div>
+      <h4>Filtres (calque actif)</h4>
+      <label>Luminosité <input type="range" id="fBr" min="0" max="200" value="100"></label>
+      <label>Contraste <input type="range" id="fCo" min="0" max="200" value="100"></label>
+      <label>Saturation <input type="range" id="fSa" min="0" max="300" value="100"></label>
+      <label>Teinte <input type="range" id="fHu" min="0" max="360" value="0"></label>
+      <label>Flou <input type="range" id="fBl" min="0" max="20" value="0"></label>
+      <div class="row">
+        <button id="fApply">Appliquer</button>
+        <button data-f="grayscale(1)">N&B</button>
+        <button data-f="sepia(1)">Sépia</button>
+        <button data-f="invert(1)">Inverser</button>
+      </div>
+    </div>
+    <div>
+      <h4>Calques</h4>
+      <div class="row" style="margin-bottom:6px">
+        <button id="lAdd">+ Calque</button><button id="lDup">Dupliquer</button>
+        <button id="lDel">Suppr.</button><button id="lUp">▲</button><button id="lDown">▼</button>
+      </div>
+      <label style="margin-bottom:6px">Opacité <input type="range" id="lOp" min="0" max="100" value="100"></label>
+      <label style="margin-bottom:6px">Fusion
+        <select id="lBlend"><option>source-over</option><option>multiply</option><option>screen</option><option>overlay</option><option>darken</option><option>lighten</option><option>difference</option></select>
+      </label>
+      <div id="layers" style="display:flex;flex-direction:column;gap:4px"></div>
+    </div>
+  </div>
+</main>
+<div id="status">Prêt</div>
+<script>
+const $ = id => document.getElementById(id);
+const view = $('view'), vctx = view.getContext('2d');
+let W = 1200, H = 800, zoom = 1;
+let layers = [], cur = 0, tool = 'brush';
+let undo = [], redo = [];
+
+const TOOLS = [
+  ['brush','🖌','Pinceau (B)'],['eraser','🧽','Gomme (E)'],['fill','🪣','Pot de peinture (G)'],
+  ['pick','💧','Pipette (I)'],['line','╱','Ligne (L)'],['rect','▭','Rectangle (R)'],
+  ['ellipse','◯','Ellipse (O)'],['text','T','Texte (T)'],['move','✥','Déplacer le calque (V)']
+];
+const tb = $('tools');
+TOOLS.forEach(([id,ic,tip]) => {
+  const b = document.createElement('button'); b.textContent = ic; b.title = tip; b.dataset.t = id;
+  b.onclick = () => setTool(id); tb.appendChild(b);
+});
+function setTool(t){ tool = t; [...tb.children].forEach(b => b.classList.toggle('on', b.dataset.t === t)); status(tip(t)); }
+const tip = t => TOOLS.find(x => x[0] === t)[2];
+function status(s){ $('status').textContent = s; }
+
+function newCanvas(w = W, h = H){ const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
+function addLayer(name, canvas, at){
+  const l = { name: name || 'Calque ' + (layers.length + 1), canvas: canvas || newCanvas(), visible: true, opacity: 1, blend: 'source-over' };
+  layers.splice(at ?? cur + 1, 0, l); cur = layers.indexOf(l); refresh(); return l;
+}
+const L = () => layers[cur];
+const ctxL = () => L().canvas.getContext('2d');
+
+function init(w, h, bg){
+  W = w; H = h; view.width = W; view.height = H; layers = []; undo = []; redo = []; cur = 0;
+  const base = addLayer('Fond', null, 0);
+  if (bg){ const c = base.canvas.getContext('2d'); c.fillStyle = bg; c.fillRect(0, 0, W, H); }
+  addLayer('Calque 1'); fit();
+}
+
+function render(){
+  vctx.clearRect(0, 0, W, H);
+  for (const l of layers){
+    if (!l.visible) continue;
+    vctx.globalAlpha = l.opacity; vctx.globalCompositeOperation = l.blend;
+    vctx.drawImage(l.canvas, 0, 0);
+  }
+  vctx.globalAlpha = 1; vctx.globalCompositeOperation = 'source-over';
+  if (preview) preview(vctx);
+}
+function refresh(){ render(); drawPanel(); }
+
+function drawPanel(){
+  const box = $('layers'); box.innerHTML = '';
+  for (let i = layers.length - 1; i >= 0; i--){
+    const l = layers[i], d = document.createElement('div');
+    d.className = 'layer' + (i === cur ? ' sel' : '');
+    const th = newCanvas(34, 24); th.getContext('2d').drawImage(l.canvas, 0, 0, 34, 24);
+    const eye = document.createElement('button'); eye.textContent = l.visible ? '👁' : '—'; eye.style.padding = '2px 6px';
+    eye.onclick = e => { e.stopPropagation(); l.visible = !l.visible; refresh(); };
+    const nm = document.createElement('span'); nm.textContent = l.name;
+    nm.ondblclick = () => { const n = prompt('Nom du calque', l.name); if (n) { l.name = n; drawPanel(); } };
+    d.append(eye, th, nm);
+    d.onclick = () => { cur = i; $('lOp').value = l.opacity * 100; $('lBlend').value = l.blend; drawPanel(); };
+    box.appendChild(d);
+  }
+}
+
+// ---------- Historique (par calque) ----------
+function snap(){
+  const l = L(); undo.push({ l, data: l.canvas.getContext('2d').getImageData(0, 0, l.canvas.width, l.canvas.height) });
+  if (undo.length > 30) undo.shift(); redo = [];
+}
+function swap(from, to){
+  const e = from.pop(); if (!e) return;
+  const c = e.l.canvas.getContext('2d');
+  to.push({ l: e.l, data: c.getImageData(0, 0, e.l.canvas.width, e.l.canvas.height) });
+  c.putImageData(e.data, 0, 0); refresh();
+}
+$('bUndo').onclick = () => swap(undo, redo);
+$('bRedo').onclick = () => swap(redo, undo);
+
+// ---------- Dessin ----------
+let drawing = false, last = null, start = null, preview = null, moveBase = null;
+const col = () => $('color').value;
+function pos(e){
+  const r = view.getBoundingClientRect();
+  return { x: (e.clientX - r.left) * W / r.width, y: (e.clientY - r.top) * H / r.height };
+}
+function stamp(c, x, y, erase){
+  const s = +$('size').value, h = $('hard').value / 100, a = $('alpha').value / 100;
+  const g = c.createRadialGradient(x, y, s / 2 * h, x, y, s / 2);
+  const rgb = erase ? '0,0,0' : hex2rgb(col());
+  g.addColorStop(0, `rgba(${rgb},${a})`); g.addColorStop(1, `rgba(${rgb},0)`);
+  c.fillStyle = g; c.fillRect(x - s / 2, y - s / 2, s, s);
+}
+function hex2rgb(h){ const n = parseInt(h.slice(1), 16); return `${n >> 16},${n >> 8 & 255},${n & 255}`; }
+function stroke(a, b, erase){
+  const c = ctxL(); c.globalCompositeOperation = erase ? 'destination-out' : 'source-over';
+  const d = Math.hypot(b.x - a.x, b.y - a.y), step = Math.max(1, +$('size').value / 8);
+  for (let t = 0; t <= d; t += step){ const k = d ? t / d : 0; stamp(c, a.x + (b.x - a.x) * k, a.y + (b.y - a.y) * k, erase); }
+  c.globalCompositeOperation = 'source-over'; render();
+}
+function shape(c, kind, a, b){
+  c.strokeStyle = col(); c.lineWidth = +$('size').value / 4 + 1; c.globalAlpha = $('alpha').value / 100; c.lineCap = 'round';
+  c.beginPath();
+  if (kind === 'line'){ c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); }
+  else if (kind === 'rect') c.rect(a.x, a.y, b.x - a.x, b.y - a.y);
+  else c.ellipse((a.x + b.x) / 2, (a.y + b.y) / 2, Math.abs(b.x - a.x) / 2, Math.abs(b.y - a.y) / 2, 0, 0, 7);
+  c.stroke(); c.globalAlpha = 1;
+}
+function floodFill(x, y){
+  const l = L(), c = ctxL(), img = c.getImageData(0, 0, W, H), d = img.data;
+  x |= 0; y |= 0; const i0 = (y * W + x) * 4, t = [d[i0], d[i0 + 1], d[i0 + 2], d[i0 + 3]];
+  const n = col(), v = parseInt(n.slice(1), 16), f = [v >> 16, v >> 8 & 255, v & 255, 255], tol = 40;
+  if (t.every((q, k) => q === f[k])) return;
+  const ok = i => Math.abs(d[i] - t[0]) + Math.abs(d[i + 1] - t[1]) + Math.abs(d[i + 2] - t[2]) + Math.abs(d[i + 3] - t[3]) <= tol;
+  const st = [[x, y]];
+  while (st.length){
+    let [px, py] = st.pop(), i = (py * W + px) * 4;
+    while (py >= 0 && ok((py * W + px) * 4)) py--;
+    py++; let L1 = false, R1 = false;
+    while (py < H && ok((py * W + px) * 4)){
+      i = (py * W + px) * 4; d[i] = f[0]; d[i + 1] = f[1]; d[i + 2] = f[2]; d[i + 3] = 255;
+      if (px > 0){ const o = ok(i - 4); if (o && !L1){ st.push([px - 1, py]); L1 = true; } else if (!o) L1 = false; }
+      if (px < W - 1){ const o = ok(i + 4); if (o && !R1){ st.push([px + 1, py]); R1 = true; } else if (!o) R1 = false; }
+      py++;
+    }
+  }
+  c.putImageData(img, 0, 0);
+}
+
+view.addEventListener('pointerdown', e => {
+  const p = pos(e); if (!L()) return;
+  view.setPointerCapture(e.pointerId);
+  if (tool === 'pick'){
+    const px = vctx.getImageData(p.x | 0, p.y | 0, 1, 1).data;
+    $('color').value = '#' + [...px].slice(0, 3).map(v => v.toString(16).padStart(2, '0')).join(''); return;
+  }
+  if (tool === 'text'){
+    const t = prompt('Texte :'); if (!t) return; snap();
+    const c = ctxL(), s = +$('size').value * 2 + 10; c.font = `bold ${s}px system-ui, sans-serif`;
+    c.fillStyle = col(); c.globalAlpha = $('alpha').value / 100; c.textBaseline = 'top'; c.fillText(t, p.x, p.y); c.globalAlpha = 1; refresh(); return;
+  }
+  snap(); drawing = true; last = start = p;
+  if (tool === 'fill'){ floodFill(p.x, p.y); drawing = false; refresh(); }
+  else if (tool === 'brush' || tool === 'eraser') stroke(p, p, tool === 'eraser');
+  else if (tool === 'move'){ moveBase = newCanvas(); moveBase.getContext('2d').drawImage(L().canvas, 0, 0); }
+});
+view.addEventListener('pointermove', e => {
+  const p = pos(e); status(`x ${p.x | 0}  y ${p.y | 0}  ·  ${W}×${H}  ·  ${Math.round(zoom * 100)} %`);
+  if (!drawing) return;
+  if (tool === 'brush' || tool === 'eraser'){ stroke(last, p, tool === 'eraser'); last = p; }
+  else if (tool === 'move'){
+    const c = ctxL(); c.clearRect(0, 0, W, H); c.drawImage(moveBase, p.x - start.x, p.y - start.y); render();
+  } else if (['line', 'rect', 'ellipse'].includes(tool)){
+    preview = c => shape(c, tool, start, p); render();
+  }
+});
+const end = e => {
+  if (!drawing) return; drawing = false;
+  if (preview){ preview = null; shape(ctxL(), tool, start, pos(e)); }
+  moveBase = null; refresh();
+};
+view.addEventListener('pointerup', end); view.addEventListener('pointercancel', end);
+
+// ---------- Filtres ----------
+function applyFilter(f){
+  snap(); const l = L(), t = newCanvas(l.canvas.width, l.canvas.height), c = t.getContext('2d');
+  c.filter = f; c.drawImage(l.canvas, 0, 0);
+  const lc = l.canvas.getContext('2d'); lc.clearRect(0, 0, W, H); lc.drawImage(t, 0, 0); refresh();
+}
+$('fApply').onclick = () => {
+  applyFilter(`brightness(${$('fBr').value}%) contrast(${$('fCo').value}%) saturate(${$('fSa').value}%) hue-rotate(${$('fHu').value}deg) blur(${$('fBl').value}px)`);
+  ['fBr', 'fCo'].forEach(i => $(i).value = 100); $('fSa').value = 100; $('fHu').value = 0; $('fBl').value = 0;
+};
+document.querySelectorAll('[data-f]').forEach(b => b.onclick = () => applyFilter(b.dataset.f));
+
+// ---------- Calques ----------
+$('lAdd').onclick = () => addLayer();
+$('lDup').onclick = () => { const c = newCanvas(); c.getContext('2d').drawImage(L().canvas, 0, 0); addLayer(L().name + ' copie', c); };
+$('lDel').onclick = () => { if (layers.length < 2) return; layers.splice(cur, 1); cur = Math.max(0, cur - 1); refresh(); };
+$('lUp').onclick = () => { if (cur < layers.length - 1){ [layers[cur], layers[cur + 1]] = [layers[cur + 1], layers[cur]]; cur++; refresh(); } };
+$('lDown').onclick = () => { if (cur > 0){ [layers[cur], layers[cur - 1]] = [layers[cur - 1], layers[cur]]; cur--; refresh(); } };
+$('lOp').oninput = e => { L().opacity = e.target.value / 100; render(); };
+$('lBlend').onchange = e => { L().blend = e.target.value; render(); };
+$('size').oninput = e => $('sizeV').textContent = e.target.value;
+
+// ---------- Fichiers ----------
+$('bOpen').onclick = () => $('file').click();
+$('file').onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  const img = new Image(); img.onload = () => {
+    if (layers.length <= 2 && layers.every(l => !hasPixels(l.canvas))) init(img.width, img.height);
+    const c = newCanvas(); c.getContext('2d').drawImage(img, 0, 0, W, H * 0 + (img.height * W / img.width > H ? H : img.height * W / img.width));
+    addLayer(f.name, c); fit();
+  }; img.src = URL.createObjectURL(f); e.target.value = '';
+};
+function hasPixels(c){ return c.getContext('2d').getImageData(0, 0, W, H).data.some((v, i) => i % 4 === 3 && v); }
+$('bNew').onclick = () => {
+  const s = prompt('Taille (largeur x hauteur)', '1200x800'); if (!s) return;
+  const m = s.match(/(\d+)\D+(\d+)/); if (m) init(+m[1], +m[2], '#ffffff');
+};
+$('bSave').onclick = () => { const a = document.createElement('a'); a.download = 'image.png'; a.href = view.toDataURL('image/png'); a.click(); };
+
+// ---------- Zoom ----------
+function setZoom(z){ zoom = Math.min(8, Math.max(.1, z)); view.style.width = W * zoom + 'px'; view.style.height = H * zoom + 'px'; }
+function fit(){ const s = $('stage'); setZoom(Math.min((s.clientWidth - 90) / W, (s.clientHeight - 90) / H, 1)); }
+$('bZoomIn').onclick = () => setZoom(zoom * 1.25); $('bZoomOut').onclick = () => setZoom(zoom / 1.25); $('bFit').onclick = fit;
+$('stage').addEventListener('wheel', e => { if (e.ctrlKey){ e.preventDefault(); setZoom(zoom * (e.deltaY < 0 ? 1.1 : .9)); } }, { passive: false });
+
+// ---------- Raccourcis ----------
+addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (e.ctrlKey && e.key === 'z'){ e.preventDefault(); swap(undo, redo); return; }
+  if (e.ctrlKey && e.key === 'y'){ e.preventDefault(); swap(redo, undo); return; }
+  const m = { b: 'brush', e: 'eraser', g: 'fill', i: 'pick', l: 'line', r: 'rect', o: 'ellipse', t: 'text', v: 'move' }[e.key];
+  if (m) setTool(m);
+});
+addEventListener('paste', e => {
+  const it = [...e.clipboardData.items].find(i => i.type.startsWith('image')); if (!it) return;
+  const img = new Image(); img.onload = () => { const c = newCanvas(); c.getContext('2d').drawImage(img, 0, 0); addLayer('Collé', c); }; img.src = URL.createObjectURL(it.getAsFile());
+});
+
+init(1200, 800, '#ffffff'); setTool('brush');
+</script>
+</body>
+</html>
